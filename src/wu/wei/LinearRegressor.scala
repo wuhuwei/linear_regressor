@@ -13,6 +13,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.DataInputStream
 import java.io.InputStream
+import java.io.EOFException
 
 object LinearRegressor {
   val endReviewDelimiter: String = "</review>"
@@ -20,9 +21,11 @@ object LinearRegressor {
   val endReviewTextDelimiter: String = "</review_text>"
   val startRatingDelimiter: String = "<rating>"
   val endRatingDelimiter: String = "</rating>"
-  
+
   def main(args: Array[String]): Unit = {
-    println(parseTokens(args(1), parseTagDict(args(0))._1))
+    var foo: FMat = ones(4, 4)
+    saveAs("foo.mat", foo, "foo")
+    parseTokens(args(1), parseTagDict(args(0))._1)
   }
 
   def parseDict(dictPath: String): (HashMap[Int, String], HashMap[String, Int]) = {
@@ -68,32 +71,35 @@ object LinearRegressor {
   }
 
   /**
-   * takes a binary tokens file, parses MAX_REVIEWS number of reviews,
-   * and returns a sparse matrix M where M(i, j) = # of occurrences of word j in review i,
-   * and a hashmap of review # => rating for that review
-  **/
-  def parseTokens(tokensPath: String, tagDict: HashMap[Int, String]) : (SMat, HashMap[Int, Int]) = {
-    println(tokensPath)
+   * takes a binary tokens file, and parses BLOCK_SIZE of them at a time, saving them into a
+   * a sparse matrix "counts" where counts(i, j) = # of occurrences of word j in review i,
+   * and a rating matrix "ratings" where ratings(i, 0) = rating for review i
+   */
+  def parseTokens(tokensPath: String, tagDict: HashMap[Int, String]) = {
+    //println(tokensPath)
+    var numDocs: Int = 0
+    val BLOCK_SIZE = 1000
+
     var rowInd: List[Int] = List[Int]()
     var colInd: List[Int] = List[Int]()
     var values: List[Int] = List[Int]()
     var ratings: HashMap[Int, Int] = new HashMap[Int, Int]()
-    var numDocs: Int = 0
-    val MAX_REVIEWS = 10
+
+    var currentColumn: List[Int] = List[Int]()
+    var numReviewsProcessed: Int = 0
+
     try {
 
       val inputFile: File = new File(tokensPath);
       val fileIn: FileInputStream = new FileInputStream(inputFile)
       val dataIn: LittleEndianDataInputStream = new LittleEndianDataInputStream(fileIn)
-      var currentColumn: List[Int] = List[Int]()
-      var numReviewsProcessed: Int = 0
 
       var ratingFlag: Boolean = false
       var countFlag: Boolean = false
       var reviewRating = -1
       var reviewWordCounts: HashMap[Int, Int] = new HashMap[Int, Int]();
 
-      while (currentColumn.length <= 3 && numReviewsProcessed < MAX_REVIEWS) {
+      while (currentColumn.length <= 3) {
         currentColumn = dataIn.readIntLE() :: currentColumn
         if (currentColumn.length == 3) {
           if (tagDict.getOrElse(currentColumn(0), "") == startReviewTextDelimiter) {
@@ -105,15 +111,29 @@ object LinearRegressor {
           } else if (tagDict.getOrElse(currentColumn(0), "") == endRatingDelimiter) {
             ratingFlag = false;
           } else if (tagDict.getOrElse(currentColumn(0), "") == endReviewDelimiter) {
-            rowInd = List.fill(reviewWordCounts.size)(numReviewsProcessed) ::: rowInd
+            rowInd = List.fill(reviewWordCounts.size)(numReviewsProcessed % BLOCK_SIZE) ::: rowInd
             val wordCountsList: List[(Int, Int)] = reviewWordCounts.toList
             colInd = wordCountsList.map(x => x._1) ::: colInd
             values = wordCountsList.map(x => x._2) ::: values
-            ratings.put(numReviewsProcessed, reviewRating)
-            println(reviewWordCounts)
+            ratings.put(numReviewsProcessed % BLOCK_SIZE, reviewRating)
             numReviewsProcessed += 1
+
             reviewWordCounts = new HashMap[Int, Int]()
             reviewRating = -1
+
+            if (numReviewsProcessed % BLOCK_SIZE == 0) {
+              val counts: SMat = sparse(icol(rowInd), icol(colInd), icol(values))
+              val ratingsList: List[(Int, Int)] = ratings.toList
+              val ratingsMat: SMat = sparse(icol(ratingsList.map(x => x._1)), icol(List.fill(ratingsList.length)(0)), icol(ratingsList.map(x => x._2)))
+              println("saving block " + numReviewsProcessed / BLOCK_SIZE + ".mat")
+              println("size: " + counts.nrows + " " + ratingsList.length)
+              saveAs(BLOCK_SIZE + "/" + numReviewsProcessed / BLOCK_SIZE + ".mat", counts, "counts", ratingsMat, "ratings")
+
+              rowInd = List[Int]()
+              colInd = List[Int]()
+              values = List[Int]()
+              ratings = new HashMap[Int, Int]()
+            }
 
           } else if (countFlag == true) {
             reviewWordCounts.put(currentColumn(0), reviewWordCounts.getOrElse(currentColumn(0), 0) + 1)
@@ -123,8 +143,18 @@ object LinearRegressor {
           currentColumn = List[Int]()
         }
       }
+    } catch {
+      case eof: EOFException => {
+        val counts: SMat = sparse(icol(rowInd), icol(colInd), icol(values))
+        val ratingsList: List[(Int, Int)] = ratings.toList
+        val ratingsMat: SMat = sparse(icol(ratingsList.map(x => x._1)), icol(List.fill(ratingsList.length)(0)), icol(ratingsList.map(x => x._2)))
+        println("saving block " + numReviewsProcessed / BLOCK_SIZE + ".mat")
+        println("size: " + counts.nrows + " " + ratingsList.length)
+        saveAs(BLOCK_SIZE + "/" + numReviewsProcessed / BLOCK_SIZE + ".mat", counts, "counts", ratingsMat, "ratings")
+      }
+      case e: Exception => println("what" + e + " " + numReviewsProcessed)
     }
-    (sparse(icol(rowInd), icol(colInd), icol(values)), ratings)
+
   }
 }
 
