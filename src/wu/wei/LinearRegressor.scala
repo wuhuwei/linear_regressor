@@ -70,7 +70,6 @@ object LinearRegressor {
 	val test_ratingsMat: FMat = test_ratingsFMat 
     
     val stepSize = 0.000001f
-    val coeff = stepSize * 2f 
     var lambda = 0.1f // Regularization parameter
     val coeff2 = stepSize * lambda
     var regressionParameters: FMat = null
@@ -90,12 +89,15 @@ object LinearRegressor {
 	    	    val old_residuals = ratingsMat - counts * regressionParameters
 		    	val old_residualError = (old_residuals.t * old_residuals)(0,0)
 	    	    val old_regressionParameters = regressionParameters
+	    	    var gradient: FMat = null
 		    	breakable { for (j <- 1 to 10) {
 		          val residuals = ratingsMat - counts * regressionParameters
-			      regressionParameters += coeff *@ ((counts_t * residuals ) - lambda * regressionParameters)
+		          gradient = -2.0f *@ (counts_t * residuals ) + lambda * regressionParameters
+			      regressionParameters -= stepSize *@ gradient
 		    	} }
 	    	    
 		    	println("File " + i + ".mat, " + new java.util.Date)
+		    	println("magnitude of gradient: " + (gradient.t * gradient)(0,0))
 	    	    val residuals = ratingsMat - counts * regressionParameters
 		    	val residualError = (residuals.t * residuals)(0,0)
 		    	println ("residual error on last training matrix: " + residualError)
